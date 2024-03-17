@@ -1,0 +1,41 @@
+from typing import Any, Dict, Generator, Optional, Union
+from opentelemetry.semconv.trace import SpanAttributes
+from opentelemetry import trace
+from _pytest.nodes import Item, Node
+from _pytest.config import Config
+from opentelemetry.sdk.resources import OTELResourceDetector
+from opentelemetry_container_distro import (
+    OpenTelemetryContainerConfigurator,
+    OpenTelemetryContainerDistro,
+)
+
+tracer = trace.get_tracer('custom_tracer')
+
+
+def pytest_configure(config: Config) -> None:
+    OpenTelemetryContainerDistro().configure()
+
+    configurator = OpenTelemetryContainerConfigurator()
+    configurator.resource_detectors.append(OTELResourceDetector())
+    configurator.configure()
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item: Item) -> Generator[None, None, None]:
+    with tracer.start_as_current_span(
+        item.nodeid,
+        attributes=_attributes_from_item(item),
+    ):
+        yield
+
+def _attributes_from_item(item: Item) -> Dict[str, Union[str, int]]:
+    filepath, line_number, _ = item.location
+    attributes: Dict[str, Union[str, int]] = {
+        SpanAttributes.CODE_FILEPATH: filepath,
+        SpanAttributes.CODE_FUNCTION: item.name,
+        "pytest.nodeid": item.nodeid,
+        "pytest.span_type": "test",
+    }
+    # In some cases like tavern, line_number can be 0
+    if line_number:
+        attributes[SpanAttributes.CODE_LINENO] = line_number
+    return attributes
